@@ -1,0 +1,17 @@
+# Paper / reference PDFs
+*.pdf
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual envs
+.venv/
+venv/
+
+# Run outputs
+results/
+
+# SLURM logs
+slurm-*.out
