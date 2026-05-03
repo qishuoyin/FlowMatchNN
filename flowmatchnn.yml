@@ -1,0 +1,14 @@
+name: flowmatchnn
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pytorch
+  - pytorch-cuda=12.1
+  - numpy
+  - scipy
+  - matplotlib
+  - tqdm
+  - pip

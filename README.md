@@ -1,224 +1,433 @@
 # FlowMatchNN
 
-Implementation of **Flow Matching with Neural Networks** (NeurIPS 2026).
+Implementation and experiments for **"A Theory on Flow Matching with Neural
+Networks"** (NeurIPS 2026 submission, paper at `neurips_2026.pdf`).
 
-This repo provides:
-1. A reusable package (`flowmatch_nn/`) implementing Algorithm 1 (training the
-   neural-network velocity field) and Algorithm 2 (the flow / sampling
-   procedure).
-2. Reproducible experiments that produce two figures:
-   - **Loss vs. time step `t`** (loss values per time step `t` of Alg 2)
-   - **TV-distance vs. time step `t`** (TV between samples and target per `t`)
-3. `argparse`-based CLI for every experiment so all hyperparameters are
-   overridable from the command line.
-4. SLURM shell scripts for submitting jobs to the Princeton cluster
-   (`/scratch/gpfs/...`).
+The paper is purely theoretical (Theorems 3.2, 3.3, 3.4 — convergence,
+generalization, Wasserstein-1 sampling guarantees) and contains **no
+experiments of its own**. This repo provides:
+
+1. A package `flowmatchnn/` that implements Algorithm 1 (data generating
+   procedure) and Algorithm 2 (learning + sampling) literally as written.
+2. Two empirical plots probed at every gradient-descent iteration `t` of
+   Algorithm 2:
+   - **Exp 1:** loss `L(θ^(t))` from Eq. (2) vs `t`
+   - **Exp 2:** Wasserstein-1 distance between Algorithm-2 samples (under
+     `θ^(t)`) and the data distribution `P_1`, vs `t`. This is the metric
+     bounded by Theorem 3.4 in the paper.
+3. `argparse`-driven scripts so all hyperparameters are CLI-overridable.
+4. Shell scripts under `exp/scripts/` that run/submit each step.
+5. A conda env file `flowmatchnn.yml` for installing on the cluster.
 
 ---
 
-## 1. Repository layout
+## 1. Math, copied directly from the paper
+
+### Setup (paper §3.1.1)
+
+- Data `{x_{1,i}}_{i ∈ [n]}` are i.i.d. from a target distribution `P_1` on `R^d`.
+- Source samples `x_{0,i}` are drawn from a conditional `P(x_0 | x_{1,i})` (the
+  paper assumes an oracle mapping; in practice we draw `x_0 ~ N(0, I_d)`
+  independently of `x_1`, the standard FM realization consistent with
+  `P_0 = N(0, I_d)`).
+- Scalar schedules `σ_τ, μ_τ` satisfy `σ_0 = μ_1 = 1` and `σ_1 = μ_0 = 0`.
+- Interpolant: `x_τ = σ_τ · x_0 + μ_τ · x_1`, so `x_τ|_{τ=0} = x_0` (noise) and
+  `x_τ|_{τ=1} = x_1` (data).
+- Conditional velocity field (Eq. 1):
+  `v_τ(x_τ | x_0) = σ'_τ · x_0 + (μ'_τ / μ_τ) · (x_τ − σ_τ · x_0)`.
+  Evaluated on a paired `(x_0, x_1)` (i.e. on the path) this collapses to
+  `v_τ = σ'_τ · x_0 + μ'_τ · x_1`.
+
+### Network (paper §3.1.1)
+
+Two-layer ReLU, **both layers trainable**:
+
+```
+f_θ(x_τ, τ, x_0) = (1/√m) Σ_{r=1}^{m} a_r · ReLU(w_r^⊤ [x_τ; τ; x_0])
+```
+
+with `a_r ∈ R^d`, `w_r ∈ R^{2d+1}`, `θ = [a_1, …, a_m, w_1, …, w_m]`.
+
+Initialization: `w_r ~ N(0, κ² I_{2d+1})`, `a_r ~ N(0, I_d)`.
+
+### Empirical loss (Eq. 2)
+
+```
+L(θ) = (1/n) Σ_{i=1}^n  || f_θ(x_{τ_i, i}, τ_i, x_{0,i}) − v_{τ_i}(x_{τ_i, i} | x_{0,i}) ||_2^2
+```
+
+### Algorithm 1 — Data generating procedure (paper p. 4)
+
+```
+input : n, dataset {x_{1,i}}_{i ∈ [n]}
+for i = 1, …, n:
+    sample τ_i ~ Uniform([0, 1])
+    sample x_{0,i} ~ P(x_0 | x_{1,i})
+    x_{τ,i} ← σ_{τ_i} · x_{0,i} + μ_{τ_i} · x_{1,i}
+return {(τ_i, x_{τ_i, i}, x_{0,i})}_{i ∈ [n]}
+```
+
+### Algorithm 2 — Learning and Sampling (paper p. 5)
+
+```
+input : augmented dataset {x_{0,i}, τ_i, x_{1,i}}_{i ∈ [n]}, step size η, constant B_1
+init  : w_r ~ N(0, κ² I_d), a_r ~ N(0, I_d)
+for t = 1, …, T:
+    θ^(t) ← θ^(t−1) − η · ∇_θ L(θ^(t−1))           # full-batch GD on Eq. (2)
+sample x̂_0
+solve  d x̂_τ / dτ = f_{θ̂}(x̂_τ, τ, x̂_0)             # Euler from τ=0 to τ=1
+B̃_1 ← √d · B_1
+truncate x̂_1 ←  x̂_1 · 1{||x̂_1|| ≤ 2 B̃_1} + (projection onto sphere of radius 2 B̃_1) · 1{||x̂_1|| > 2 B̃_1}
+return x̂_1
+```
+
+`T` is the number of **gradient-descent iterations** (not Euler steps).
+
+---
+
+## 2. Note on the original README's convention
+
+The original README specified `x_1 ~ N(0,1)` and `σ(τ) = τ, μ(τ) = 1 − τ`.
+Under the paper's boundary conditions `σ_0 = μ_1 = 1`, `σ_1 = μ_0 = 0`, the
+unique linear choice is the **opposite**: `σ(τ) = 1 − τ`, `μ(τ) = τ`. The
+original spec corresponds to swapping the labels `x_0 ↔ x_1`, which would
+also break Algorithm 2's sampling step (line 6 needs to draw a *fresh*
+`x̂_0` from the easy distribution `P_0`).
+
+This implementation follows the paper:
+
+| Symbol      | Meaning           | Distribution      | Schedule choice           |
+|-------------|-------------------|-------------------|---------------------------|
+| `x_0`       | source / noise    | `N(0, I_d)`       | weighted by `σ_τ = 1 − τ` |
+| `x_1`       | target / data     | `P_1` (TBD)       | weighted by `μ_τ = τ`     |
+
+The schedule `σ, μ` is plugged in via two functions in
+`flowmatchnn/utils/data.py` and can be swapped if you really want the
+original ordering.
+
+---
+
+## 3. Experiments
+
+For each gradient-descent iteration `t = 0, 1, …, T`:
+
+- **Exp 1 (`run_exp1.py`):** record `loss[t] = L(θ^(t))` evaluated on the
+  same `n_train` training pairs (default `n_train = 500`).
+- **Exp 2 (`run_exp2.py`):** run Algorithm 2's sampling step using `θ^(t)`
+  to draw `n_train` samples `{x̂_1^(j)}` (matched to the training-set size,
+  so there is no separate `n_eval` knob), then estimate
+  `W_1(P_1, P_{x̂_1})`.
+
+Visualization (`run_exp1_vis.py`, `run_exp2_vis.py`) reads the trace files
+in `results/` and writes each figure as a PNG into `figs/`. There are two
+plot modes selected by `--mode`:
+
+- `--mode setting`: one PNG per `(m, η, n_train, n_test)` setting, with
+  every `d` in `D_LIST` overlaid as a separate curve (color = `d`).
+  - `figs/loss_vs_t__<setting>.png`
+  - `figs/w1_vs_t__<setting>.png`
+- `--mode global`: one PNG per `(n_train, n_test)`, with every `(m, η)`
+  pair overlaid as a separate curve. The y-value is the tail mean over
+  the last `--tail` evaluations. The window size is set by `TAIL` in
+  `scripts/_grid.sh` (override at submit time via
+  `TAIL=10 sbatch scripts/run_exp2_vis.sh`).
+  - `figs/loss_vs_d__ntr<ntr>_nte<nte>.png`
+  - `figs/w1_vs_d__ntr<ntr>_nte<nte>.png`
+
+In the global plot, color encodes `η` (light → dark for large → small),
+and marker / linestyle encodes `m` cycling through 3 distinct pairs
+(`o`/`-`, `s`/`--`, `^`/`:`); with 5 `m` values the encoding wraps
+around, so e.g. `m=16` and `m=128` share marker/linestyle and are
+disambiguated only by `η`-color. See `_M_LINESTYLES` and `_M_MARKERS`
+in `exp/_vis_common.py` to extend.
+
+### W_1-distance estimator
+
+The paper bounds `W_1(P_1, hat P_1)` (Theorem 3.4), so we evaluate
+convergence in the same metric. Computing the multivariate `W_1` in
+`R^d` exactly costs `O(n^3)` (linear program), which is impractical
+inside a training loop swept across `d ∈ {5, …, 50}` and
+`n_test = 5000`. The standard practical surrogate — and the
+one the optimal-transport literature uses for high-dimensional `W_1`
+estimation — is the **sliced Wasserstein-1**:
+
+```
+SW_1(P, Q) = (1 / K) Σ_{k=1}^K  W_1(u_k · P,  u_k · Q),
+                                   u_k iid uniform on S^{d-1}.
+```
+
+`SW_1` is a metric, equals 0 iff `P = Q`, and lower-bounds the true
+multivariate `W_1`. Each 1-D `W_1` has a closed form via the CDF
+formulation `W_1 = ∫ |F_p − F_q|`, evaluated on the sorted union of
+the two projected sample sets — so unequal `n_train` / `n_test` are
+handled exactly, no LP solver required. Default `K = 128`
+projections; override at submit time with `--n_proj 256`. Directions
+are drawn once per run (seeded off `--seed`) and reused for every
+evaluation, so the trace is comparable across `t` (no projection-noise
+jitter). Implementation: `flowmatchnn/utils/metrics.py`.
+
+### Hyperparameters (final, locked in)
+
+| Name        | Value   | Where         | Notes |
+|-------------|---------|---------------|-------|
+| `n_train`   | swept   | Algs 1 & 2    | Training-set size for Eq. (2); also reused as the # of Algorithm-2 samples drawn under `θ^(t)` for `W_1`. See grid below. |
+| `n_test`    | swept   | Exp 2         | Fresh `P_1` samples used as the `W_1` reference set. See grid below. |
+| `d`         | swept   | Algs 1 & 2    | Ambient dimension. See grid below. |
+| `κ`         | 1.0     | Alg 2 (init)  |  |
+| `T`         | 500     | Alg 2 (GD)    | Full-batch GD iterations. |
+| `T_euler`   | 200     | Alg 2 (sample)| Euler steps for the ODE solve at sampling time. |
+| `B_1`       | 10.0    | Alg 2 (sample)| Truncation constant; `B̃_1 = √d · B_1`, threshold `2 B̃_1`. |
+| `eval_every`| 10      | Both exps     | Evaluate every 10 GD steps → 51 points: `t ∈ {0, 10, …, 500}`. |
+| `n_proj`    | 128     | Exp 2         | # random unit directions used by the sliced-W_1 estimator. |
+| `seed`      | 0       |               |  |
+| `device`    | `cuda`  |               | **Hard fail** if `torch.cuda.is_available() == False`. No CPU fallback. |
+
+### `(m, η, d, n_train, n_test)` grid search
+
+Paper requires `m` polynomial in `n, d, …` and small `η`. We sweep five
+hyperparameters jointly (full cross-product):
+
+| Hyperparameter | Grid                                                  |
+|----------------|-------------------------------------------------------|
+| `m` (width)    | `{16, 32, 64, 128, 256}` (geometric, 5 values)        |
+| `η` (step size)| `{1e-4, 1e-3, 1e-2}`                                  |
+| `d` (ambient)  | `{5, 10, 15, …, 50}` (10 values, step 5)              |
+| `n_train`      | `{500}`                                               |
+| `n_test`       | `{5000}`                                              |
+
+→ `5 · 3 · 10 · 1 · 1 = 150` cells. Index mapping (`m` outermost,
+`n_test` innermost) and the `cell_indices` dispatcher live in
+`scripts/_grid.sh`. Each cell produces its own
+`results/m{m}_eta{eta}_d{d}_ntr{n_train}_nte{n_test}/` directory.
+
+`n_train` and `n_test` are pinned to a single value: an empirical
+audit showed `n_test ∈ {5000, 10000}` produced visually identical
+plots (median |Δw₁|/w₁ ≈ 1.2e-4), and `n_train` was collapsed to
+the value where the W₁-vs-d trend is cleanest. Sweeping `m`
+geometrically (rather than two adjacent points) is what makes the
+NTK saturation visible in the global plot.
+
+Plots are produced at two different aggregation levels (see §3 above):
+one *per-setting* `(m, η, n_train, n_test)` figure (10 d-curves
+overlaid) and one *global* `(n_train, n_test)` figure (15 `(m, η)`
+curves overlaid). To run an even smaller grid, edit the `*_LIST`
+arrays in `_grid.sh`; the plot scripts pick up the new lists
+automatically.
+
+#### Compute budget and SLURM sharding
+
+The previous 9-cell pilot job (`d = 5, n_train = 100, n_test = 5000`,
+full pipeline data → exp1+exp1_vis → exp2+exp2_vis) ran in **1 min 27 s
+total ≈ 10 s/cell**. Per-cell compute scales (very roughly) as
+`m · (2d + 1) · n_train · T`, so against the current 150-cell grid
+(`n_train = 500`, `d ∈ {5, …, 50}`, `T = 500`):
+
+| Cell                                          | Scale vs pilot | Estimated wall time |
+|-----------------------------------------------|---------------:|--------------------:|
+| `m=16,  d=5,   n_train=500, T=500`  (lightest)|    ~5×         |     ~50 s           |
+| Geometric-mean cell (m≈64, d≈25, n=500, T=500)|    ~95×        |     ~16 min         |
+| `m=256, d=50,  n_train=500, T=500`  (heaviest)|    ~735×       |     ~2 h            |
+
+The scripts default to **`#SBATCH --array=0-9` — 10 SLURM array tasks**,
+each processing a stride-10 shard of 15 cells:
+
+- shard `k ∈ {0..9}` runs cells `{k, k+10, k+20, …}` (round robin), so
+  heavy and light cells are interleaved across shards.
+- `cell_indices` / `setting_indices` in `scripts/_grid.sh` read
+  `SLURM_ARRAY_TASK_ID` and `SLURM_ARRAY_TASK_COUNT` to compute the
+  stride, so changing the shard count is just
+  `sbatch --array=0-N scripts/run_all_exp.sh` (use contiguous ranges).
+
+### Source coupling `P(x_0 | x_1)`
+
+Locked in: `P(x_0 | x_1) = N(x_1, I_d)`. The marginal `P_0` is therefore
+`P_1 * N(0, I_d)`; at sampling time we draw fresh `x̂_0` from this
+marginal by drawing `x_1' ~ P_1` then `x̂_0 ~ N(x_1', I_d)`. See
+`flowmatchnn/utils/data.py` (`sample_p_x0_given_x1`, `sample_p0_marginal`).
+
+### Target `P_1`
+
+Two-component Gaussian mixture in `R^d` (with `d` the swept ambient
+dimension), centers at `±2·e_1`, identity covariance, equal weights.
+See `sample_p1_gmm` in `flowmatchnn/utils/data.py`.
+
+---
+
+## 4. Repository layout
 
 ```
 FlowMatchNN/
 ├── README.md
-├── pyproject.toml                   # package metadata + deps
-├── requirements.txt                 # pinned deps for cluster envs
+├── .gitignore
+├── neurips_2026.pdf                # gitignored
+├── flowmatchnn.yml                 # conda env (install on cluster)
 │
-├── flowmatch_nn/                    # the installable package
+├── flowmatchnn/                    # the installable package
 │   ├── __init__.py
-│   ├── interpolant.py               # mu(tau), sigma(tau), x_tau = mu*x0 + sigma*x1
-│   ├── models.py                    # MLP velocity field v_theta(x, tau)
-│   ├── data.py                      # samplers for x0 (target) and x1 = N(0, I_d)
-│   ├── algorithm1.py                # Alg 1: train v_theta on the FM loss
-│   ├── algorithm2.py                # Alg 2: flow / sampling with kappa, T
-│   ├── losses.py                    # FM loss; per-t loss bookkeeping
-│   ├── metrics.py                   # TV distance estimators (histogram / k-NN)
-│   ├── utils.py                     # seeding, logging, IO helpers
-│   └── config.py                    # dataclass holding all hyperparameters
+│   ├── data_generation.py          # Algorithm 1
+│   ├── learning_and_sampling.py    # Algorithm 2
+│   ├── model.py                    # f_θ two-layer ReLU per §3.1.1
+│   └── utils/
+│       ├── __init__.py
+│       ├── data.py                 # P_0/P_1 samplers + interpolant (σ_τ, μ_τ, σ'_τ, μ'_τ)
+│       ├── velocity.py             # v_τ(x_τ | x_0) per Eq. (1)
+│       ├── losses.py               # Eq. (2)
+│       └── metrics.py              # sliced Wasserstein-1 distance
 │
-├── scripts/                         # entry points (use argparse)
-│   ├── train.py                     # runs Alg 1, saves checkpoint
-│   ├── run_alg2.py                  # runs Alg 2, logs per-t loss + samples
-│   ├── eval_tv.py                   # computes TV-distance per t from samples
-│   └── plot_results.py              # generates the two figures
+├── exp/                            # python entry points
+│   ├── run_exp1.py                 # loss vs t
+│   ├── run_exp2.py                 # W_1  vs t
+│   ├── run_exp1_vis.py             # plot loss vs t
+│   └── run_exp2_vis.py             # plot W_1  vs t
 │
-├── slurm/                           # cluster submission scripts
-│   ├── env.sh                       # module loads + venv activate
-│   ├── train.slurm
-│   ├── run_alg2.slurm
-│   ├── eval_tv.slurm
-│   └── full_pipeline.slurm          # train -> alg2 -> tv -> plot
+├── scripts/                        # shell scripts (root-level)
+│   ├── run_data.sh                 # generate the augmented dataset (Alg 1)
+│   ├── run_exp1.sh                 # run Exp 1
+│   ├── run_exp2.sh                 # run Exp 2
+│   ├── run_exp1_vis.sh             # plot Exp 1
+│   ├── run_exp2_vis.sh             # plot Exp 2
+│   ├── run_exp1_all.sh             # data → exp1 → vis
+│   └── run_exp2_all.sh             # data → exp2 → vis
 │
-├── configs/                         # default YAML/JSON configs (optional)
-│   └── default.yaml
+├── figs/                           # final figures (committed)
 │
-├── results/                         # auto-created; per-run outputs
+├── data/                           # gitignored — Algorithm 1 outputs (.pkl)
 │   └── <run_name>/
-│       ├── config.json
-│       ├── checkpoint.pt
-│       ├── alg2_trace.npz           # loss[t], samples[t], times[t]
-│       ├── tv.npz                   # tv_distance[t]
-│       └── figures/
-│           ├── loss_vs_t.pdf
-│           └── tv_vs_t.pdf
+│       └── dataset.pkl             # {τ_i, x_τ,i, x_0,i, x_1,i}
 │
-└── tests/                           # minimal pytest sanity checks
-    ├── test_interpolant.py
-    ├── test_algorithm1.py
-    └── test_algorithm2.py
+├── logs/                           # gitignored — stdout/stderr from cluster jobs
+└── results/                        # gitignored — Exp 1 / Exp 2 outputs
+    └── <run_name>/
+        ├── config.json             # snapshot of CLI args (see §6)
+        ├── exp1_trace.csv          # columns: t, loss
+        ├── exp2_trace.csv          # columns: t, w1
+        └── exp2_samples.pkl        # generated x̂_1 per evaluated t (optional)
 ```
+
+### On `slurm/`
+
+You're right — a separate `slurm/` directory isn't needed. Each shell script
+under `scripts/` will carry its own `#SBATCH` headers at the top, so
+`bash scripts/run_exp1.sh` works locally and
+`sbatch scripts/run_exp1.sh` submits to the cluster. One file per task,
+no duplication.
+
+### File formats in `data/` and `results/`
+
+- `data/<run_name>/dataset.pkl` — Python pickle of a dict
+  `{"tau": (n,), "x_tau": (n, d), "x_0": (n, d), "x_1": (n, d)}`.
+  Pickle (rather than CSV) because these are 2-D float arrays; CSV would
+  flatten and lose the shape semantics.
+- `results/<run_name>/exp1_trace.csv` — two columns, `t,loss`.
+- `results/<run_name>/exp2_trace.csv` — two columns, `t,w1`.
+- `results/<run_name>/exp2_samples.pkl` — optional pickle of
+  `{t_value: ndarray (n_train, d)}` so you can reconstruct the samples
+  behind any `W_1` value if you need to.
 
 ---
 
-## 2. Mathematical setup (from the paper / README)
+## 5. Installation and usage
 
-Let `x_0` denote the target distribution we want to learn and
-`x_1 ~ N(0, I_d)` denote the easy reference distribution.
-
-Stochastic interpolant on `tau ∈ [0, 1]`:
-```
-x_tau = mu(tau) * x_0 + sigma(tau) * x_1
-mu(tau)    = 1 - tau
-sigma(tau) = tau
-```
-
-So `x_0` is recovered at `tau = 0` and pure noise at `tau = 1`.
-
-> **Confirm against paper:** the README gives `mu(tau) = 1 - tau`,
-> `sigma(tau) = tau`, and `x_1 ~ N(0, 1)`. This is the standard linear
-> interpolant. If the paper uses a different convention for which endpoint
-> is data vs. noise, we'll just flip the roles in `interpolant.py`.
-
-### Algorithm 1 — training (placeholder, to confirm vs. paper)
-
-Inputs (from README):
-- `n = 100` (sample size, batch of `(x_0, x_1)` pairs)
-- `d = 5` (dimension)
-- `x_1 ~ N(0, I_d)`
-- target `x_0` distribution: **needs confirmation from paper.**
-  Reasonable defaults: a 2-mode Gaussian mixture in `R^d`, or whatever the
-  paper's toy example uses.
-
-Per training step:
-1. Sample `tau ~ Uniform[0, 1]`.
-2. Sample `x_0 ~ p_data`, `x_1 ~ N(0, I_d)`.
-3. Form `x_tau = mu(tau) x_0 + sigma(tau) x_1`.
-4. Target velocity `u(tau, x_tau) = mu'(tau) x_0 + sigma'(tau) x_1
-                                 = -x_0 + x_1`.
-5. Loss `L(theta) = E || v_theta(tau, x_tau) - u(tau, x_tau) ||^2`.
-6. Gradient step on `theta`.
-
-### Algorithm 2 — flow / sampling (placeholder, to confirm vs. paper)
-
-Inputs (from README): `kappa = 1`, `T = 200`.
-
-Discretize `tau ∈ [0, 1]` into `T` steps `t = 0, 1, ..., T-1` with step
-size `dt = 1/T`. Starting from `x_1 ~ N(0, I_d)`, integrate the learned
-velocity field backwards to `tau = 0`. With a stochastic component
-controlled by `kappa`, this looks like an SDE step:
-```
-x_{tau - dt} = x_tau - v_theta(tau, x_tau) * dt + kappa * sqrt(dt) * eta,
-                                                            eta ~ N(0, I_d)
-```
-
-> **Confirm against paper:** I'm guessing the SDE form because `kappa`
-> typically scales a noise term in flow-matching-with-stochasticity
-> variants. Please paste Alg 2 (or the relevant equation) so I match
-> exactly.
-
-### What the figures plot
-
-For each `t ∈ {0, ..., T-1}` of Alg 2:
-- **`loss_vs_t.pdf`**: the FM loss
-  `|| v_theta(tau_t, x_tau_t) - u(tau_t, x_tau_t) ||^2`
-  evaluated at the current sample `x_tau_t` produced by Alg 2 (averaged
-  over the batch of `n` samples).
-- **`tv_vs_t.pdf`**: TV distance between the empirical distribution of the
-  `n` samples at step `t` and the target distribution.
-  Estimator: histogram-based per-dimension TV (cheap, works for `d = 5`),
-  with an optional k-NN-based multivariate TV as a sanity check.
-
----
-
-## 3. Hyperparameters (defaults; all overridable via argparse)
-
-| Name              | Default       | Where         | Notes                                    |
-|-------------------|---------------|---------------|------------------------------------------|
-| `n`               | 100           | Alg 1 / Alg 2 | sample size / batch size                 |
-| `d`               | 5             | Alg 1 / Alg 2 | dimension                                |
-| `kappa`           | 1.0           | Alg 2         | noise scale                              |
-| `T`               | 200           | Alg 2         | number of time steps                     |
-| `lr`              | 1e-3          | Alg 1         | Adam learning rate                       |
-| `n_train_steps`   | 20000         | Alg 1         | training iterations                      |
-| `hidden_dim`      | 128           | model         | MLP width                                |
-| `n_layers`        | 4             | model         | MLP depth                                |
-| `activation`      | `silu`        | model         |                                          |
-| `seed`            | 0             | global        |                                          |
-| `device`          | `cuda`        | global        | falls back to `cpu` automatically        |
-| `target`          | `gmm`         | data          | `gmm` / `gaussian` / `checkerboard` / ...|
-| `n_eval`          | 5000          | Alg 2 / TV    | samples used for TV estimate             |
-| `out_dir`         | `results/run` | IO            |                                          |
-
----
-
-## 4. Usage
-
-### Local quickstart
+### Cluster install (one time)
 
 ```bash
+module load anaconda3/2024.6                  # or whichever module is current
+conda env create -f flowmatchnn.yml
+conda activate flowmatchnn
 pip install -e .
-
-# 1. Train v_theta (Algorithm 1)
-python scripts/train.py --out_dir results/run0 --n 100 --d 5 \
-                       --n_train_steps 20000 --seed 0
-
-# 2. Run Algorithm 2, log per-t loss and samples
-python scripts/run_alg2.py --out_dir results/run0 --kappa 1.0 --T 200
-
-# 3. Compute TV distance per t
-python scripts/eval_tv.py --out_dir results/run0 --n_eval 5000
-
-# 4. Make the two figures
-python scripts/plot_results.py --out_dir results/run0
 ```
 
-### Cluster (SLURM)
+### Run locally
 
 ```bash
-sbatch slurm/full_pipeline.slurm           # uses defaults
-sbatch slurm/full_pipeline.slurm --kappa 0.5 --T 400   # override
+conda activate flowmatchnn
+IDX=0 bash scripts/run_exp1_all.sh            # one cell only (data → exp1 → figure)
+IDX=0 bash scripts/run_exp2_all.sh            # one cell only (data → exp2 → figure)
 ```
 
-Each `*.slurm` script:
-- requests 1 GPU + a small CPU/RAM allocation,
-- sources `slurm/env.sh` (module load python, activate venv),
-- forwards extra CLI flags through to the underlying Python script.
+Without `IDX`, the local mode iterates the full 150-cell grid sequentially
+in a single GPU allocation — fine for a tiny edited grid, way too slow for
+the default sweep.
+
+### Submit to SLURM (full grid)
+
+The recommended one-shot driver is `run_all_exp.sh`: a single `sbatch`
+fans the 150-cell grid out across 10 SLURM array tasks (each task = one
+stride-10 shard) and runs **dataset → train → both vis passes** in
+order:
+
+```bash
+sbatch scripts/run_all_exp.sh     # ~15 cells/shard, all metrics + figures
+```
+
+Internally `run_all_exp.sh` runs, in order:
+
+1. `run_data.sh` — build `data/<cell>/dataset.pkl` per cell (cheap).
+   Inline in the training array.
+2. `run_exp1.sh` — train each cell once. `run_exp1.py` writes BOTH
+   `results/<cell>/exp1_trace.csv` (loss) AND `exp2_trace.csv` (W₁)
+   from the same trajectory, so we do not also call `run_exp2.sh`
+   (that would re-train every cell from a different seed if you want
+   a second trajectory). Inline in the training array.
+3. `run_exp1_vis.sh` — per-setting `loss-vs-t` (10 d-curves) + global
+   `loss-vs-d` (15 `(m, η)` curves). Submitted as a **separate** sbatch
+   job with `--dependency=afterany` on the training array.
+4. `run_exp2_vis.sh` — per-setting `W₁-vs-t` + global `W₁-vs-d`.
+   Same dependency strategy as step 3.
+
+Vis is split into a dependent job because each shard only computes its
+own slice of `D_LIST`, but vis needs CSVs from *every* shard. Running
+vis inline-per-shard (the previous design) raced: a shard that finished
+training quickly rendered figures from CSVs that were still being
+written by peer shards, producing per-setting plots with `ok=4/10`
+d-curves and a global plot keyed off the fastest, most-incomplete
+shard. With the dependency split, vis starts only after every training
+shard has reported in.
+
+For finer-grained workflows the individual scripts can still be
+submitted on their own:
+
+```bash
+sbatch scripts/run_data.sh        # build dataset.pkl per cell (cheap)
+sbatch scripts/run_exp1.sh        # train + write exp1/exp2 CSVs, 10 shards
+sbatch scripts/run_exp2.sh        # (only needed if you want a separate trajectory)
+sbatch scripts/run_exp1_vis.sh    # render figs/loss_vs_{t,d}__... .png
+sbatch scripts/run_exp2_vis.sh    # render figs/w1_vs_{t,d}__... .png
+```
+
+All shell scripts forward extra CLI flags through to the underlying Python
+script, e.g.
+
+```bash
+sbatch scripts/run_exp1.sh --T 500 --kappa 0.5
+```
+
+To change the shard count or concurrency, override `--array` at submit
+time (always use contiguous `0-(N-1)` ranges so the stride math works):
+
+```bash
+sbatch --array=0-19      scripts/run_exp1.sh    # 20 shards (~7-8 cells each)
+sbatch --array=0-9%5     scripts/run_exp1.sh    # 10 shards, cap concurrency at 5
+sbatch --array=42        scripts/run_exp1.sh    # single cell (cell 42 only)
+```
+
+Job stdout/stderr go to `logs/`; the augmented dataset goes to
+`data/<run_name>/dataset.pkl`; experiment traces go to
+`results/<run_name>/{exp1_trace.csv, exp2_trace.csv}`; the figures
+go to `figs/{loss,w1}_vs_t__<setting>.png` (per-setting, all-d
+overlay) and `figs/{loss,w1}_vs_d__ntr<ntr>_nte<nte>.png` (global,
+all-(m,η) overlay). The `(m, η, d, n_train, n_test)` grid itself is
+defined in `scripts/_grid.sh` — edit it in one place.
 
 ---
 
-## 5. Reproducibility
+## 6. Confirmed configuration (resolved)
 
-- All randomness routed through a single `torch.Generator` keyed by `--seed`.
-- Each run dumps `config.json` containing the resolved argparse namespace.
-- `results/<run_name>/` is self-contained: checkpoint + traces + figures.
-
----
-
-## 6. Open questions for you (please confirm before I implement)
-
-1. **The PDF isn't accessible to me on the cluster.** Could you paste
-   Algorithm 1 and Algorithm 2 (or attach the PDF inside this workspace,
-   e.g. `/scratch/gpfs/JQFAN/qy1448/FlowMatchNN/paper.pdf`)? I want to
-   match the loss form and the SDE/ODE step exactly.
-2. **Target distribution `p_data` for `x_0`**: the README only specifies
-   `x_1 ~ N(0, 1)`. What does the paper use as the *target*? (Gaussian
-   mixture? A specific mean/covariance? A non-Gaussian toy?)
-3. **TV-distance estimator**: is the paper's TV computed per-dimension and
-   averaged, or via a multivariate estimator? I'll default to per-dim
-   histogram TV until told otherwise.
-4. **Cluster account / partition**: which SLURM `--account` and
-   `--partition` should the `*.slurm` headers use (e.g., `pli`, `gpu`)?
-   Default I'll put in is `gpu` with a `# TODO` comment.
-
-Once you confirm the four points above (especially #1 and #2), I'll
-implement the package, scripts, and SLURM files in that order.
+| # | Question                                  | Resolution |
+|---|-------------------------------------------|------------|
+| 1 | Schedule convention                       | Paper's `σ(τ) = 1 − τ`, `μ(τ) = τ`. |
+| 2 | Source `P(x_0 \| x_1)`                    | `N(x_1, I_d)` (paired with `x_1`). |
+| 3 | Target `P_1`                              | Two-component GMM in `R^5`, centers `±2·e_1`, identity cov. |
+| 4 | `(m, η, d, n_train, n_test)` and other defaults | 5-D grid search over `m ∈ {16, 32, 64, 128, 256}`, `η ∈ {1e-4, 1e-3, 1e-2}`, `d ∈ {5, 10, 15, …, 50}` (10 values), `n_train ∈ {500}`, `n_test ∈ {5000}` (= 150 cells). `n_train` is also reused as the model-side count for the `W_1` estimate. Fixed: `T = 500`, `B_1 = 10`, `T_euler = 200`, `eval_every = 10`, `n_proj = 128`. |
+| 5 | SLURM partition / account / time          | `--partition=ailab`, `--account=jqfan`, `--time=24:00:00`, `--gres=gpu:1`, `--mem=16G`. Headers embedded in every script under `scripts/`. |
+| 6 | CUDA version                              | `pytorch-cuda=12.1`, pinned in `flowmatchnn.yml`. Scripts hard-fail when CUDA is unavailable (no CPU fallback). |

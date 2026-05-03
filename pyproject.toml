@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flowmatchnn"
+version = "0.1.0"
+description = "Flow-Matching with two-layer ReLU networks (NeurIPS 2026 reference impl)"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["flowmatchnn*"]
+exclude = ["exp*", "scripts*", "data*", "results*", "logs*", "figs*"]

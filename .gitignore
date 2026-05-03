@@ -6,12 +6,15 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 
-# Virtual envs
+# Conda / virtual envs
 .venv/
 venv/
 
-# Run outputs
+# Generated datasets (Algorithm 1 outputs)
+data/
+
+# Run outputs (traces, checkpoints)
 results/
 
-# SLURM logs
-slurm-*.out
+# Cluster job logs (stdout/stderr)
+logs/
