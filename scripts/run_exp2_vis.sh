@@ -74,12 +74,12 @@ if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]] \
    || [[ "${SLURM_ARRAY_TASK_ID}" == "${GLOBAL_TASK_ID}" ]]; then
   for ntr in "${N_TRAIN_LIST[@]}"; do
     for nte in "${N_TEST_LIST[@]}"; do
-      echo "[run_exp2_vis] global ntr=$ntr nte=$nte (m_list=$M_LIST_CSV, eta_list=$ETA_LIST_CSV, tail=$TAIL)"
+      echo "[run_exp2_vis] global ntr=$ntr nte=$nte (m_list=$M_LIST_CSV, eta_list=$ETA_LIST_CSV, tail=$TAIL, n_seeds=$N_SEEDS)"
       python exp/run_exp2_vis.py \
         --mode global \
         --n_train "$ntr" --n_test "$nte" \
         --m_list "$M_LIST_CSV" --eta_str_list "$ETA_LIST_CSV" \
-        --d_list "$D_LIST_CSV" --tail "$TAIL" \
+        --d_list "$D_LIST_CSV" --tail "$TAIL" --n_seeds "$N_SEEDS" \
         --data_root "$DATA_ROOT" --results_root "$RESULTS_ROOT" \
         --figs_dir "$FIGS_DIR" \
         "$@"

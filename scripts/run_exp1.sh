@@ -55,23 +55,26 @@ T="${T:-500}"
 T_EULER="${T_EULER:-200}"
 B1="${B1:-10.0}"
 EVAL_EVERY="${EVAL_EVERY:-10}"
-SEED="${SEED:-0}"
 TARGET_CENTER_NORM="${TARGET_CENTER_NORM:-2.0}"
 DATA_ROOT="${DATA_ROOT:-data}"
 RESULTS_ROOT="${RESULTS_ROOT:-results}"
 
 source scripts/_grid.sh
+# N_SEEDS is defined in _grid.sh (default 10); override with N_SEEDS=k sbatch ...
 
 for IDX in $(cell_indices); do
   resolve_cell "$IDX"
-  echo "[run_exp1] cell idx=$IDX m=$M eta=$ETA d=$D n_train=$N_TRAIN n_test=$N_TEST run=$RUN_NAME"
-  python exp/run_exp1.py \
-    --m "$M" --eta "$ETA" --run_name "$RUN_NAME" \
-    --d "$D" --n_train "$N_TRAIN" --n_test "$N_TEST" \
-    --kappa "$KAPPA" --T "$T" \
-    --T_euler "$T_EULER" --B1 "$B1" \
-    --eval_every "$EVAL_EVERY" --seed "$SEED" \
-    --target_center_norm "$TARGET_CENTER_NORM" \
-    --data_root "$DATA_ROOT" --results_root "$RESULTS_ROOT" \
-    "$@"
+  for SEED in $(seq 0 $(( N_SEEDS - 1 ))); do
+    SEEDED_RUN_NAME="${RUN_NAME}_seed${SEED}"
+    echo "[run_exp1] cell idx=$IDX seed=$SEED m=$M eta=$ETA d=$D n_train=$N_TRAIN n_test=$N_TEST run=$SEEDED_RUN_NAME"
+    python exp/run_exp1.py \
+      --m "$M" --eta "$ETA" --run_name "$SEEDED_RUN_NAME" \
+      --d "$D" --n_train "$N_TRAIN" --n_test "$N_TEST" \
+      --kappa "$KAPPA" --T "$T" \
+      --T_euler "$T_EULER" --B1 "$B1" \
+      --eval_every "$EVAL_EVERY" --seed "$SEED" \
+      --target_center_norm "$TARGET_CENTER_NORM" \
+      --data_root "$DATA_ROOT" --results_root "$RESULTS_ROOT" \
+      "$@"
+  done
 done

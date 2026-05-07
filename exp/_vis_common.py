@@ -105,13 +105,14 @@ def tail_mean(values: List[float], tail: int) -> float:
 
 def cell_run_name(
     m: int, eta_str: str, d: int, n_train: int, n_test: int,
+    seed: int = 0,
 ) -> str:
     """
-    Cell directory name `m{m}_eta{eta}_d{d}_ntr{ntr}_nte{nte}`, matching
-    scripts/_grid.sh's RUN_NAME byte-for-byte. Used to look up
-    results/<cell>/exp{1,2}_trace.csv from setting / global mode.
+    Cell directory name including seed suffix, matching scripts/run_exp1.sh's
+    SEEDED_RUN_NAME byte-for-byte.  Setting-mode plots always use seed=0;
+    global-mode plots aggregate over all seeds.
     """
-    return f"m{m}_eta{eta_str}_d{d}_ntr{n_train}_nte{n_test}"
+    return f"m{m}_eta{eta_str}_d{d}_ntr{n_train}_nte{n_test}_seed{seed}"
 
 
 def setting_name(
@@ -161,6 +162,7 @@ def collect_tail_means(
     tail: int,
     results_root: Path,
     csv_filename: str,
+    seed: int = 0,
 ) -> Tuple[List[int], List[float], List[int]]:
     """
     For each d in d_list, read results/<cell>/<csv_filename> and compute
@@ -175,7 +177,7 @@ def collect_tail_means(
     ys: List[float] = []
     missing: List[int] = []
     for d in d_list:
-        run = cell_run_name(m, eta_str, d, n_train, n_test)
+        run = cell_run_name(m, eta_str, d, n_train, n_test, seed=seed)
         csv_path = results_root / run / csv_filename
         if not csv_path.exists():
             missing.append(d)
@@ -204,18 +206,20 @@ def collect_setting_traces(
     d_list: List[int],
     results_root: Path,
     csv_filename: str,
+    seed: int = 0,
 ) -> Tuple[List[Tuple[int, List[int], List[float]]], List[int]]:
     """
-    Read every d's trace CSV under results_root.
+    Read the seed-0 trace CSV for every d under results_root.
 
-    Returns (traces, missing) where traces is a list of
+    Setting-mode plots (loss/W_1 vs t) always use the first replication
+    (seed=0).  Returns (traces, missing) where traces is a list of
     (d, ts, vals) for d's whose CSV exists and whose values are all
     finite, and missing is the parallel list of skipped d's.
     """
     traces: List[Tuple[int, List[int], List[float]]] = []
     missing: List[int] = []
     for d in d_list:
-        run = cell_run_name(m, eta_str, d, n_train, n_test)
+        run = cell_run_name(m, eta_str, d, n_train, n_test, seed=seed)
         csv_path = results_root / run / csv_filename
         if not csv_path.exists():
             missing.append(d)
@@ -321,12 +325,13 @@ def collect_global_curves(
     tail: int,
     results_root: Path,
     csv_filename: str,
+    seed: int = 0,
 ) -> Tuple[
     List[Tuple[int, str, List[int], List[float]]],
     List[Tuple[int, str]],
 ]:
     """
-    Read every (m, eta_str) cell's tail mean across d_list.
+    Read every (m, eta_str) cell's tail mean across d_list for one seed.
 
     Returns (curves, empty) where curves is a list of
     (m, eta_str, ds, ys) for pairs that had at least one finite
@@ -343,11 +348,80 @@ def collect_global_curves(
                 d_list=d_list, tail=tail,
                 results_root=results_root,
                 csv_filename=csv_filename,
+                seed=seed,
             )
             if not ds:
                 empty.append((m, eta_str))
                 continue
             curves.append((m, eta_str, ds, ys))
+    return curves, empty
+
+
+def collect_global_curves_with_errbar(
+    *,
+    m_list: List[int],
+    eta_str_list: List[str],
+    n_train: int,
+    n_test: int,
+    d_list: List[int],
+    tail: int,
+    n_seeds: int,
+    results_root: Path,
+    csv_filename: str,
+) -> Tuple[
+    List[Tuple[int, str, List[int], List[float], List[float]]],
+    List[Tuple[int, str]],
+]:
+    """
+    Aggregate tail-mean(loss/W_1) across n_seeds replications (seeds
+    0..n_seeds-1) for every (m, eta_str, d) cell.
+
+    Returns (curves, empty) where curves is a list of
+    (m, eta_str, ds, ys_mean, ys_std).  ys_std is the sample std-dev
+    across seeds (0.0 when only one seed is available).  d values for
+    which no seed had a finite tail-mean are silently skipped.  (m, eta)
+    pairs with no surviving d land in `empty`.
+    """
+    curves: List[Tuple[int, str, List[int], List[float], List[float]]] = []
+    empty: List[Tuple[int, str]] = []
+
+    for m in m_list:
+        for eta_str in eta_str_list:
+            ds_valid: List[int] = []
+            ys_mean: List[float] = []
+            ys_std: List[float] = []
+
+            for d in d_list:
+                seed_vals: List[float] = []
+                for seed in range(n_seeds):
+                    run = cell_run_name(m, eta_str, d, n_train, n_test, seed=seed)
+                    csv_path = results_root / run / csv_filename
+                    if not csv_path.exists():
+                        continue
+                    _, values = read_trace(csv_path)
+                    tm = tail_mean(values, tail)
+                    if math.isfinite(tm):
+                        seed_vals.append(tm)
+
+                if not seed_vals:
+                    continue
+
+                mu = sum(seed_vals) / len(seed_vals)
+                if len(seed_vals) > 1:
+                    var = sum((v - mu) ** 2 for v in seed_vals) / (len(seed_vals) - 1)
+                    sigma = math.sqrt(var)
+                else:
+                    sigma = 0.0
+
+                ds_valid.append(d)
+                ys_mean.append(mu)
+                ys_std.append(sigma)
+
+            if not ds_valid:
+                empty.append((m, eta_str))
+                continue
+            curves.append((m, eta_str, ds_valid, ys_mean, ys_std))
+
     return curves, empty
 
 
@@ -423,6 +497,86 @@ def plot_global_d(
     else:
         # Legend just outside the right edge so 9+ entries don't crowd
         # the data area; constrained_layout reserves the slot.
+        leg = ax.legend(
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            ncol=1,
+            handlelength=2.6,
+            borderaxespad=0.0,
+        )
+        leg.get_frame().set_linewidth(0.6)
+
+    fig.savefig(out)
+    plt.close(fig)
+
+
+def plot_global_d_errbar(
+    *,
+    curves: List[Tuple[int, str, List[int], List[float], List[float]]],
+    m_list: List[int],
+    eta_str_list: List[str],
+    out: Path,
+    ylabel: str,
+    yscale: str,
+) -> None:
+    """
+    Like plot_global_d but with shaded ±1 std error bands across replications.
+
+    Each entry in `curves` is (m, eta_str, ds, ys_mean, ys_std) as
+    returned by collect_global_curves_with_errbar.  The mean is drawn as
+    a solid line with markers; the ±1 std band is filled at 18 % alpha
+    using the same curve colour.  On log y-scale the lower bound is
+    clamped to 1e-300 to avoid rendering artefacts.
+    """
+    if len(m_list) > len(_M_LINESTYLES) \
+            or len(m_list) > len(_M_MARKERS):
+        raise ValueError(
+            f"plot_global_d_errbar: m_list has {len(m_list)} entries but only "
+            f"{len(_M_LINESTYLES)} linestyles / {len(_M_MARKERS)} "
+            "markers are defined; extend _M_LINESTYLES / _M_MARKERS "
+            "in exp/_vis_common.py to keep every legend entry unique."
+        )
+
+    eta_colors = _eta_palette(len(eta_str_list))
+    eta_color = {e: c for e, c in zip(eta_str_list, eta_colors)}
+    m_style = {
+        m: (_M_LINESTYLES[i], _M_MARKERS[i])
+        for i, m in enumerate(m_list)
+    }
+
+    fig, ax = plt.subplots(figsize=(8.5, 5.2), constrained_layout=True)
+
+    for m, eta_str, ds, ys_mean, ys_std in curves:
+        ls, mk = m_style[m]
+        color = eta_color[eta_str]
+
+        lo = [max(mu - sig, 1e-300) for mu, sig in zip(ys_mean, ys_std)]
+        hi = [mu + sig for mu, sig in zip(ys_mean, ys_std)]
+
+        ax.fill_between(ds, lo, hi, color=color, alpha=0.18, linewidth=0)
+        ax.plot(
+            ds, ys_mean,
+            color=color,
+            linestyle=ls,
+            marker=mk,
+            lw=1.6,
+            ms=5.0,
+            markeredgewidth=0.0,
+            label=f"$m={m}$, $\\eta={eta_str}$",
+        )
+
+    ax.set_xlabel(r"ambient dimension $d$")
+    ax.set_ylabel(ylabel)
+    if yscale == "log" and curves:
+        ax.set_yscale("log")
+    ax.grid(True, which="both", alpha=0.25, linewidth=0.6)
+
+    if not curves:
+        ax.text(
+            0.5, 0.5, "no finite tail mean for any (m, eta)",
+            ha="center", va="center", transform=ax.transAxes,
+        )
+    else:
         leg = ax.legend(
             loc="center left",
             bbox_to_anchor=(1.02, 0.5),

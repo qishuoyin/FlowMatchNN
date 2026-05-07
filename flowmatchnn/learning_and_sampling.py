@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import torch
 
@@ -270,3 +270,168 @@ def train_and_trace(
             evaluate(t)
 
     return {"t": ts, "loss": losses, "w1": w1s}
+
+
+# ---------------------------------------------------------------------------
+# Real-data variants (empirical P_1 reference instead of GMM)
+# ---------------------------------------------------------------------------
+
+
+@torch.no_grad()
+def sample_algorithm2_real(
+    model: TwoLayerReLU,
+    *,
+    n_eval: int,
+    d: int,
+    B1: float,
+    T_euler: int,
+    generator: torch.Generator,
+    device: torch.device,
+    dtype: torch.dtype,
+    x_1_pool: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Like sample_algorithm2 but draws x_hat_0 from the empirical P_0.
+
+    The empirical P_0 mirrors the training coupling: we pick a random
+    x_1' from x_1_pool (the real-data reference set) and set
+    x_hat_0 = x_1' + N(0, I_d).  This is consistent with the coupling
+    P(x_0 | x_1) = N(x_1, I_d) used to build the training dataset.
+
+    Args:
+        x_1_pool: tensor of shape (N_pool, d) — real samples from P_1
+            (e.g. PCA-embedded test images).  Sampled with replacement.
+    """
+    n_pool = x_1_pool.shape[0]
+    idx = torch.randint(n_pool, (n_eval,), generator=generator, device=device)
+    x_1_drawn = x_1_pool[idx].to(dtype=dtype)
+    noise = torch.randn(x_1_drawn.shape, generator=generator,
+                        device=device, dtype=dtype)
+    x_hat_0 = x_1_drawn + noise
+
+    x = x_hat_0.clone()
+    dt = 1.0 / T_euler
+    for k in range(T_euler):
+        tau_scalar = k * dt
+        tau_batch = torch.full(
+            (n_eval,), tau_scalar, device=device, dtype=dtype
+        )
+        v = model(x, tau_batch, x_hat_0)
+        x = x + dt * v
+
+    R = 2.0 * math.sqrt(d) * B1
+    norms = x.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+    inside = (norms <= R).to(dtype)
+    projected = x * (R / norms)
+    return inside * x + (1.0 - inside) * projected
+
+
+def train_and_trace_real(
+    cfg: TrainConfig,
+    *,
+    dataset: Dict[str, torch.Tensor],
+    x_1_ref: torch.Tensor,
+    device: torch.device,
+    dtype: torch.dtype = torch.float32,
+) -> Dict[str, List[float]]:
+    """
+    Train on real-data PCA embeddings and record loss + W_1 traces.
+
+    Identical to train_and_trace except:
+      - The W_1 reference set is the pre-computed x_1_ref (PCA-embedded
+        test images) rather than fresh GMM draws.
+      - Source samples at eval time are drawn from the empirical P_0
+        (random x_1 from x_1_ref + Gaussian noise) rather than the GMM.
+
+    Args:
+        cfg: TrainConfig — d must equal the PCA dimension.
+        dataset: dict with keys "tau", "x_tau", "x_0", "x_1" (all in
+            PCA space, shape (n_train, d_pca)), as produced by
+            exp/run_real_exp.py.
+        x_1_ref: tensor of shape (n_ref, d_pca) — held-out test
+            images in PCA space, used as the W_1 reference.
+        device: CUDA device.
+        dtype: tensor dtype, default float32.
+
+    Returns:
+        {"t": [...], "loss": [...], "w1": [...]} — same format as
+        train_and_trace.
+    """
+    tau = dataset["tau"].to(device=device, dtype=dtype)
+    x_tau = dataset["x_tau"].to(device=device, dtype=dtype)
+    x_0 = dataset["x_0"].to(device=device, dtype=dtype)
+    x_1 = dataset["x_1"].to(device=device, dtype=dtype)
+    x_1_ref = x_1_ref.to(device=device, dtype=dtype)
+
+    g_init = torch.Generator(device=device).manual_seed(
+        cfg.seed * 1_000_003 + 1
+    )
+    g_sample = torch.Generator(device=device).manual_seed(
+        cfg.seed * 1_000_003 + 2
+    )
+    g_proj = torch.Generator(device=device).manual_seed(
+        cfg.seed * 1_000_003 + 4
+    )
+
+    model = TwoLayerReLU(
+        d=cfg.d,
+        m=cfg.m,
+        kappa=cfg.kappa,
+        generator=g_init,
+        device=device,
+        dtype=dtype,
+    )
+
+    proj_directions = metric_utils.random_unit_directions(
+        cfg.n_proj,
+        cfg.d,
+        generator=g_proj,
+        device=device,
+        dtype=dtype,
+    )
+
+    ts: List[int] = []
+    losses: List[float] = []
+    w1s: List[float] = []
+
+    def evaluate(t: int) -> None:
+        model.eval()
+        with torch.no_grad():
+            pred = model(x_tau, tau, x_0)
+            loss_val = loss_utils.empirical_loss(pred, x_0, x_1, tau).item()
+        x_hat_1 = sample_algorithm2_real(
+            model,
+            n_eval=cfg.n_train,
+            d=cfg.d,
+            B1=cfg.B1,
+            T_euler=cfg.T_euler,
+            generator=g_sample,
+            device=device,
+            dtype=dtype,
+            x_1_pool=x_1_ref,
+        )
+        w1_val = metric_utils.sliced_wasserstein_1(
+            x_hat_1, x_1_ref, directions=proj_directions,
+        ).item()
+        ts.append(t)
+        losses.append(loss_val)
+        w1s.append(w1_val)
+        model.train()
+
+    evaluate(0)
+    for t in range(1, cfg.T + 1):
+        model.train()
+        if model.W.grad is not None:
+            model.W.grad = None
+        if model.A.grad is not None:
+            model.A.grad = None
+        pred = model(x_tau, tau, x_0)
+        loss = loss_utils.empirical_loss(pred, x_0, x_1, tau)
+        loss.backward()
+        with torch.no_grad():
+            model.W.add_(model.W.grad, alpha=-cfg.eta)
+            model.A.add_(model.A.grad, alpha=-cfg.eta)
+        if t % cfg.eval_every == 0:
+            evaluate(t)
+
+    return {"t": ts, "loss": losses, "w1": w1s, "model": model}

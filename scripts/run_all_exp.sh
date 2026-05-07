@@ -20,25 +20,25 @@
 #
 # Steps in order:
 #
-#   1. run_data.sh        -- materialise data/<cell>/dataset.pkl
-#                            for every (m, eta, d, n_train, n_test).
-#                            Runs inline in the array (this script).
-#   2. run_exp1.sh        -- train each cell. run_exp1.py writes
-#                            BOTH results/<cell>/exp1_trace.csv (loss)
-#                            AND results/<cell>/exp2_trace.csv (W_1)
-#                            from the same trajectory, so we do NOT
-#                            also call run_exp2.sh -- that would
-#                            re-train every cell. (run_exp2.sh stays
-#                            available for users who want a separate
-#                            seed/trajectory.) Runs inline in the array.
-#   3. run_exp1_vis.sh    -- per-setting loss-vs-t (all d overlaid)
-#                            + global loss-vs-d (all (m, eta) overlaid).
+#   1. run_exp1.sh        -- train each cell for every seed in
+#                            0..N_SEEDS-1 (default 10 replications).
+#                            run_exp1.py generates the dataset on demand
+#                            under data/<cell>_seed<S>/dataset.pkl, so
+#                            run_data.sh is no longer needed (it used
+#                            the old seedless directory format and would
+#                            produce unused files). run_exp1.py writes
+#                            BOTH results/<cell>_seed<S>/exp1_trace.csv
+#                            (loss) AND exp2_trace.csv (W_1) from the
+#                            same trajectory. Runs inline in the array.
+#   2. run_exp1_vis.sh    -- per-setting loss-vs-t (all d overlaid,
+#                            seed-0 traces only) + global loss-vs-d
+#                            (mean ± 1 std across all seeds).
 #                            Submitted as a SEPARATE sbatch with
 #                            --dependency=afterany:$SLURM_ARRAY_JOB_ID
 #                            (see "vis race" comment below).
-#   4. run_exp2_vis.sh    -- per-setting W_1-vs-t (all d overlaid)
-#                            + global W_1-vs-d (all (m, eta) overlaid).
-#                            Same dependency strategy as step 3.
+#   3. run_exp2_vis.sh    -- per-setting W_1-vs-t (seed-0 only) +
+#                            global W_1-vs-d (mean ± 1 std).
+#                            Same dependency strategy as step 2.
 #
 # Vis race (job 7617946): the previous version called both vis scripts
 # inline at the end of every shard's allocation. But each shard had only
@@ -78,7 +78,6 @@ if [[ -n "${SLURM_ARRAY_JOB_ID:-}" ]] \
   echo "[run_all_exp] queued exp2_vis as $VIS2_JID  (after array ${SLURM_ARRAY_JOB_ID})"
 fi
 
-bash scripts/run_data.sh "$@"
 bash scripts/run_exp1.sh "$@"
 
 # Local mode (no SLURM): run vis inline. This is the IDX=42 / unsharded

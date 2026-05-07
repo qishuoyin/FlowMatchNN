@@ -22,6 +22,11 @@ D_LIST=(5 10 15 20 25 30 35 40 45 50)
 N_TRAIN_LIST=(500)
 N_TEST_LIST=(5000)
 
+# Number of independent replications (seeds 0..N_SEEDS-1) per cell.
+# Used by run_exp{1,2}.sh for the seed loop and by run_exp{1,2}_vis.sh
+# to pass --n_seeds to the error-bar aggregation in global mode.
+N_SEEDS="${N_SEEDS:-10}"
+
 # Tail-window size for the global aggregation plots
 # (run_exp{1,2}_vis.sh / run_exp{1,2}_vis.py --mode global): number
 # of trailing eval points averaged into each (m, eta) curve's y-value

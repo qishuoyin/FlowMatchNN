@@ -125,6 +125,12 @@ def parse_args():
                            'scripts/_grid.sh (the source of truth), so this '
                            'argparse default only applies when '
                            'run_exp{1,2}_vis.py is invoked directly.')
+    args.add_argument('--n_seeds', type=int, default=10,
+                      help='[global only] number of replications (seeds '
+                           '0..n_seeds-1) to aggregate over when computing '
+                           'error bars in the loss/W_1 vs d plot. The shell '
+                           'driver always passes this explicitly from '
+                           'N_SEEDS in scripts/_grid.sh.')
     args.add_argument('--d_list', type=str, default=None,
                       help='Comma-separated list of d values to read CSVs '
                            'for, e.g. "5,10,15,...,100". Defaults to '

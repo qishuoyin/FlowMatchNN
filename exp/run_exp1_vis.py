@@ -20,12 +20,12 @@ from pathlib import Path
 
 from _common import chdir_to_repo, parse_args
 from _vis_common import (
-    collect_global_curves,
+    collect_global_curves_with_errbar,
     collect_setting_traces,
     parse_d_list,
     parse_int_list,
     parse_str_list,
-    plot_global_d,
+    plot_global_d_errbar,
     plot_setting_curves,
     setting_name,
 )
@@ -127,16 +127,16 @@ def _main_global(args) -> None:
         f"loss_vs_d__ntr{args.n_train}_nte{args.n_test}.png"
     )
 
-    curves, empty = collect_global_curves(
+    curves, empty = collect_global_curves_with_errbar(
         m_list=m_list, eta_str_list=eta_str_list,
         n_train=args.n_train, n_test=args.n_test,
-        d_list=d_list, tail=args.tail,
+        d_list=d_list, tail=args.tail, n_seeds=args.n_seeds,
         results_root=results_root,
         csv_filename=CSV_FILENAME,
     )
     n_total = len(m_list) * len(eta_str_list)
 
-    plot_global_d(
+    plot_global_d_errbar(
         curves=curves,
         m_list=m_list, eta_str_list=eta_str_list,
         out=out,
@@ -145,7 +145,7 @@ def _main_global(args) -> None:
     )
     print(
         f"[run_exp1_vis] wrote {out}  "
-        f"(ntr={args.n_train}, nte={args.n_test}, "
+        f"(ntr={args.n_train}, nte={args.n_test}, n_seeds={args.n_seeds}, "
         f"ok={len(curves)}/{n_total}, "
         f"empty={empty if empty else '[]'})"
     )
