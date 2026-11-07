@@ -147,14 +147,12 @@ bash scripts/exp2_coupling/run_coupling_vis.sh
 bash scripts/exp3_real_data/run_pca_sweep_vis.sh
 ```
 
-The principal outputs are:
+---
 
-| Study | Per-run artifacts | Aggregate outputs |
-| --- | --- | --- |
-| NTK | `ntk_trace.csv`, `ntk_summary.json` | `ntk_rate_*.png`, `ntk_width_err_*.png`, `ntk_lambda_*.png`, `ntk_table.csv` |
-| Coupling | `trace.csv`, `coup_summary.json` | `coupling_w1.png`, `coupling_table.csv` |
-| PCA | `pixel_trace.csv`, `pca_summary.json`, `samples.npy` | `pca_vel_risk.png`, `pca_pixel_w1.png`, sample grids, `pca_sweep_table.csv` |
+## Conclusion
 
-Each run also writes `config.json`. Aggregate files are placed in the
-matching `figs/exp<k>_<name>/` directory. Visualization scripts report
-missing cells rather than silently treating an incomplete sweep as complete.
+FlowMatchNN provides a unified implementation of the paper's algorithms
+and experiments for studying optimization dynamics, coupling choices, and
+representation dimension in neural flow matching. The shared training,
+evaluation, and visualization code makes the theoretical and empirical
+analyses reproducible within one consistent framework.
