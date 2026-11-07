@@ -158,31 +158,3 @@ The principal outputs are:
 Each run also writes `config.json`. Aggregate files are placed in the
 matching `figs/exp<k>_<name>/` directory. Visualization scripts report
 missing cells rather than silently treating an incomplete sweep as complete.
-
-### Simulation and image experiments
-
-The repository includes drivers for the completed simulation and image
-experiments:
-
-```bash
-sbatch scripts/exp1_optimization/run_all.sh                       # 150-cell simulation sweep
-sbatch scripts/exp1_optimization/run_w1_vis.sh                    # simulation W₁ figures
-sbatch scripts/exp3_real_data/run_all_real_exp_mnist.sh           # MNIST
-sbatch scripts/exp3_real_data/run_all_real_exp_fashion_mnist.sh   # Fashion-MNIST
-```
-
-### Customization
-
-The source-of-truth grids are
-`scripts/exp1_optimization/_ntk_grid.sh`,
-`scripts/exp2_coupling/_grid.sh`, and
-`scripts/exp3_real_data/_pca_grid.sh`. Their visualization drivers source
-the same files, so grid and plotting axes stay synchronized.
-
-Extra CLI arguments are forwarded to the Python entry point. `IDX` selects
-one flattened grid cell for an individual run:
-
-```bash
-sbatch scripts/exp2_coupling/run_coupling.sh --T 100000  # change iteration cap
-IDX=0 bash scripts/exp1_optimization/run_ntk.sh          # run one cell
-```
