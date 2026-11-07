@@ -1,5 +1,5 @@
 """
-Helpers shared across exp/run_*.py: argparse, IO, CUDA check,
+Helpers shared across exp/exp*/run_*.py: argparse, IO, CUDA check,
 path resolution.
 """
 
@@ -84,7 +84,7 @@ def parse_args():
                       help='Output dir for the PNG figures (vis scripts)')
 
     # ----- vis-only flags -----
-    # Both run_exp1_vis.py and run_exp2_vis.py support two modes:
+    # Both run_loss_vis.py and run_w1_vis.py support two modes:
     #   setting : per-setting trace plot, x = t, one curve per d in
     #             --d_list. Fixes (m, eta_str, n_train, n_test).  [default]
     #             -> figs/{loss,w1}_vs_t__<setting>.png
@@ -104,25 +104,25 @@ def parse_args():
                            '"vs d" plot.')
     args.add_argument('--eta_str', type=str, default=None,
                       help='[setting only] eta as a string, matching the '
-                           'literal token in scripts/_grid.sh (e.g. "1e-4", '
+                           'literal token in scripts/exp1_optimization/_grid.sh (e.g. "1e-4", '
                            '"1e-3"). Required because cell directory names '
                            'are built by bash from this literal, not from '
                            'Python\'s "{eta:g}" format.')
     args.add_argument('--m_list', type=str, default=None,
                       help='[global only] comma-separated list of widths '
                            'm, e.g. "16,32,64,128,256". Defaults to M_LIST '
-                           'in scripts/_grid.sh; the shell driver always '
+                           'in scripts/exp1_optimization/_grid.sh; the shell driver always '
                            'passes it explicitly.')
     args.add_argument('--eta_str_list', type=str, default=None,
                       help='[global only] comma-separated list of eta '
                            'literals, e.g. "1e-4,1e-3,1e-2". Defaults to '
-                           'ETA_LIST in scripts/_grid.sh; the shell '
+                           'ETA_LIST in scripts/exp1_optimization/_grid.sh; the shell '
                            'driver always passes it explicitly.')
     args.add_argument('--tail', type=int, default=5,
                       help='# of trailing evals to average over for each '
                            'cell in "global" mode. The shell driver always '
                            'passes this explicitly from TAIL in '
-                           'scripts/_grid.sh (the source of truth), so this '
+                           'scripts/exp1_optimization/_grid.sh (the source of truth), so this '
                            'argparse default only applies when '
                            'run_exp{1,2}_vis.py is invoked directly.')
     args.add_argument('--n_seeds', type=int, default=10,
@@ -130,11 +130,11 @@ def parse_args():
                            '0..n_seeds-1) to aggregate over when computing '
                            'error bars in the loss/W_1 vs d plot. The shell '
                            'driver always passes this explicitly from '
-                           'N_SEEDS in scripts/_grid.sh.')
+                           'N_SEEDS in scripts/exp1_optimization/_grid.sh.')
     args.add_argument('--d_list', type=str, default=None,
                       help='Comma-separated list of d values to read CSVs '
                            'for, e.g. "5,10,15,...,100". Defaults to '
-                           'D_LIST in scripts/_grid.sh; the shell driver '
+                           'D_LIST in scripts/exp1_optimization/_grid.sh; the shell driver '
                            'always passes it explicitly. Used as the curve '
                            'set in "setting" mode and the x-axis in '
                            '"global" mode.')
@@ -154,6 +154,7 @@ def require_cuda() -> torch.device:
 
     Per project policy, every entry point must run on a GPU node;
     we do not silently fall back to CPU.
+
     """
     if not torch.cuda.is_available():
         raise SystemExit(
@@ -172,7 +173,7 @@ def default_run_name(
 
     Convention: "m{m}_eta{eta:g}_d{d}_ntr{n_train}_nte{n_test}" so each
     (m, eta, d, n_train, n_test) cell of the grid maps to a distinct
-    subdir. Mirrors the RUN_NAME constructed by scripts/_grid.sh.
+    subdir. Mirrors the RUN_NAME constructed by scripts/exp1_optimization/_grid.sh.
     """
     return f"m{m}_eta{eta:g}_d{d}_ntr{n_train}_nte{n_test}"
 

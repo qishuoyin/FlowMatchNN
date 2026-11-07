@@ -1,5 +1,5 @@
 """
-Shared helpers for run_real_exp1_vis.py, run_real_exp2_vis.py,
+Shared helpers for run_real_loss_vis.py, run_real_w1_vis.py,
 and run_real_vis_combined.py.
 
 Mirrors the role of _vis_common.py for the simulation experiments.

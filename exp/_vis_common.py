@@ -1,5 +1,6 @@
 """
-Helpers shared between exp/run_exp1_vis.py and exp/run_exp2_vis.py.
+Helpers shared between exp/exp1_optimization/run_loss_vis.py and
+exp/exp1_optimization/run_w1_vis.py (the legacy simulation figures).
 
 Both scripts now operate in two modes:
 
@@ -98,8 +99,8 @@ def tail_mean(values: List[float], tail: int) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Naming (must match scripts/_grid.sh byte-for-byte; see comment in
-# exp/run_exp1_vis.py for the eta-string rationale)
+# Naming (must match scripts/exp1_optimization/_grid.sh byte-for-byte; see comment in
+# exp/exp1_optimization/run_loss_vis.py for the eta-string rationale)
 # ---------------------------------------------------------------------------
 
 
@@ -108,7 +109,7 @@ def cell_run_name(
     seed: int = 0,
 ) -> str:
     """
-    Cell directory name including seed suffix, matching scripts/run_exp1.sh's
+    Cell directory name including seed suffix, matching scripts/exp1_optimization/run_train.sh's
     SEEDED_RUN_NAME byte-for-byte.  Setting-mode plots always use seed=0;
     global-mode plots aggregate over all seeds.
     """
@@ -119,7 +120,7 @@ def setting_name(
     m: int, eta_str: str, n_train: int, n_test: int,
 ) -> str:
     """
-    Setting directory-key (no d), matching scripts/_grid.sh's
+    Setting directory-key (no d), matching scripts/exp1_optimization/_grid.sh's
     SETTING_NAME byte-for-byte.
     """
     return f"m{m}_eta{eta_str}_ntr{n_train}_nte{n_test}"

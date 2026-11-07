@@ -13,7 +13,10 @@
 # Idempotent fast path: nothing to do if `flowmatchnn` is already importable.
 # Covers interactive shells where the user already ran `conda activate
 # flowmatchnn` before invoking the script directly.
-if python -c "import flowmatchnn" >/dev/null 2>&1; then
+# Run the probe from / — `python -c` puts the cwd on sys.path, so probing
+# from the repo root would find the flowmatchnn/ source dir and pass even
+# under a python that does not have the package installed.
+if (cd / && python -c "import flowmatchnn") >/dev/null 2>&1; then
   return 0
 fi
 

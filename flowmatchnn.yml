@@ -12,3 +12,6 @@ dependencies:
   - matplotlib
   - tqdm
   - pip
+  - pip:
+      - pot        # exact W_1 (ot.emd2) + minibatch-OT coupling
+      - pytest     # test/ suite (NTK closed-form validation etc.)

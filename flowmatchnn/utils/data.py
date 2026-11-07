@@ -220,3 +220,66 @@ def make_dataset(
     x_0 = sample_p_x0_given_x1(x_1, generator=generator, dtype=dtype)
     x_tau = interpolate(x_0, x_1, tau)
     return tau, x_tau, x_0
+
+
+# ---------------------------------------------------------------------------
+# Alternative couplings (coupling comparison)
+# ---------------------------------------------------------------------------
+
+
+def minibatch_ot_pairing(
+    x_0: torch.Tensor,
+    x_1: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Re-order x_0 by the optimal-transport matching to x_1 (POT exact
+    EMD with squared-Euclidean cost, uniform weights, equal sizes).
+
+    In this full-batch GD setup the whole training set is one batch, so
+    "minibatch OT" degenerates to one exact OT plan over the n pairs.
+
+    Returns x_0 permuted so that row i is transported to x_1[i].
+    """
+    import numpy as np
+    import ot
+
+    if x_0.shape != x_1.shape:
+        raise ValueError("minibatch_ot_pairing needs equal-shape samples")
+    n = x_0.shape[0]
+    a = np.full(n, 1.0 / n)
+    M = ot.dist(
+        x_0.detach().cpu().numpy().astype(np.float64),
+        x_1.detach().cpu().numpy().astype(np.float64),
+        metric="sqeuclidean",
+    )
+    plan = ot.emd(a, a, M, numItermax=1_000_000)   # (n, n) permutation/n
+    src_idx = plan.argmax(axis=0)                  # source row for target i
+    return x_0[torch.as_tensor(src_idx, device=x_0.device, dtype=torch.long)]
+
+
+def permute_pairing(
+    x_0: torch.Tensor,
+    *,
+    generator: torch.Generator,
+) -> torch.Tensor:
+    """
+    Re-pair an existing source batch to the targets by a random
+    permutation (coupling comparison).
+
+    This is the matched-marginal way to realise an INDEPENDENT
+    coupling: the returned tensor contains exactly the same x_0 rows,
+    so the source marginal, the target marginal and the sample sizes
+    are bit-identical to the conditional arm -- only the pairing
+    changes. Comparing `permute_pairing(x_0)` against the original
+    x_0 therefore isolates the effect of the coupling from the effects
+    of changing the source distribution, the architecture or the
+    optimisation budget.
+
+    This is the right construction whenever the point of the comparison
+    is the coupling itself: drawing a fresh independent source instead
+    would change the source distribution at the same time and the two
+    effects could not be separated.
+    """
+    n = x_0.shape[0]
+    perm = torch.randperm(n, generator=generator, device=x_0.device)
+    return x_0[perm]
