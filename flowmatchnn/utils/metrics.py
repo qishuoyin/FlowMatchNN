@@ -171,3 +171,50 @@ def _sliced_w1_from_projections(
     # Per-projection W_1, then average over projections.
     w1_per_proj = (deltas * (cdf_p - cdf_q).abs()).sum(dim=-1)  # (K,)
     return w1_per_proj.mean()
+
+
+# ---------------------------------------------------------------------------
+# Exact multivariate W_1 (sampling-error evaluation)
+# ---------------------------------------------------------------------------
+
+
+def wasserstein1_exact(
+    samples_p: torch.Tensor,
+    samples_q: torch.Tensor,
+    *,
+    max_points: int = 5000,
+) -> float:
+    """
+    Exact multivariate Wasserstein-1 distance between two sample sets,
+    solved as a discrete optimal-transport LP via POT's network-simplex
+    (`ot.emd2`) with Euclidean ground cost.
+
+    Complements the sliced estimator above: used in low dimension
+    (d <= 5) to cross-check the sliced estimator and to
+    report the exact metric the theory bounds.
+
+    Args:
+        samples_p: (N_p, d) sample matrix.
+        samples_q: (N_q, d) sample matrix. Sizes may differ (uniform
+            weights on each side).
+        max_points: guard on the LP size — the cost matrix is
+            N_p x N_q, so both sides must stay <= max_points.
+
+    Returns:
+        Non-negative float.
+    """
+    import numpy as np
+    import ot
+
+    n_p, n_q = samples_p.shape[0], samples_q.shape[0]
+    if max(n_p, n_q) > max_points:
+        raise ValueError(
+            f"wasserstein1_exact: {max(n_p, n_q)} points > max_points = "
+            f"{max_points}; subsample or use sliced_wasserstein_1."
+        )
+    xp = samples_p.detach().cpu().numpy().astype(np.float64)
+    xq = samples_q.detach().cpu().numpy().astype(np.float64)
+    M = ot.dist(xp, xq, metric="euclidean")
+    a = np.full(n_p, 1.0 / n_p)
+    b = np.full(n_q, 1.0 / n_q)
+    return float(ot.emd2(a, b, M, numItermax=1_000_000))

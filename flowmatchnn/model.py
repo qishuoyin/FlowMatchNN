@@ -102,3 +102,62 @@ class TwoLayerReLU(nn.Module):
         z = torch.cat([x_tau, tau, x_0], dim=-1)
         h = torch.relu(z @ self.W.T)
         return (h @ self.A) / math.sqrt(self.m)
+
+
+class UncondTwoLayerReLU(nn.Module):
+    """
+    Unconditional variant of TwoLayerReLU for the standard flow-matching
+    parameterization f_theta(x_tau, tau) (coupling comparison).
+
+    Identical two-layer ReLU architecture and 1/sqrt(m) NTK
+    normalisation, but the input drops the x_0 conditioning:
+
+        input dim = d + 1     -- concat of x_tau (R^d), tau (R)
+
+    Used by the independent / minibatch-OT coupling arms, where the
+    velocity target is a function of (x_tau, tau) only.
+    """
+
+    def __init__(
+        self,
+        d: int,
+        m: int,
+        *,
+        kappa: float = 1.0,
+        generator: torch.Generator | None = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype = torch.float32,
+    ) -> None:
+        super().__init__()
+        self.d = d
+        self.m = m
+        self.kappa = kappa
+
+        if generator is None:
+            W = torch.randn(m, d + 1, device=device, dtype=dtype) * kappa
+            A = torch.randn(m, d, device=device, dtype=dtype)
+        else:
+            W = (
+                torch.randn(
+                    m, d + 1,
+                    generator=generator, device=device, dtype=dtype,
+                )
+                * kappa
+            )
+            A = torch.randn(
+                m, d, generator=generator, device=device, dtype=dtype
+            )
+        self.W = nn.Parameter(W)
+        self.A = nn.Parameter(A)
+
+    def forward(self, x_tau: torch.Tensor, tau: torch.Tensor) -> torch.Tensor:
+        """
+        Evaluate f_theta on a batch of (x_tau, tau) pairs.
+
+        Shapes: x_tau (B, d), tau (B,) or (B, 1). Returns (B, d).
+        """
+        if tau.ndim == 1:
+            tau = tau.unsqueeze(-1)
+        z = torch.cat([x_tau, tau], dim=-1)
+        h = torch.relu(z @ self.W.T)
+        return (h @ self.A) / math.sqrt(self.m)

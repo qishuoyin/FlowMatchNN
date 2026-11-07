@@ -1,176 +1,192 @@
 # FlowMatchNN
 
-Code accompanying **"A Theory on Flow Matching with Neural Networks"**
-(NeurIPS 2026 submission). The paper establishes convergence, generalization,
-and Wasserstein-1 sampling guarantees for flow matching trained with a
-two-layer ReLU network. This repository provides implementations of the
-two algorithms in the paper and empirical illustrations of those guarantees.
+Reference implementation for **"A Theory on Flow Matching with Neural
+Networks"**. The paper studies convergence, generalization, and
+Wasserstein-1 sampling guarantees for flow matching with a two-layer
+ReLU velocity network.
+
+The repository contains the implementations of Algorithms 1 and 2, the
+original paper experiments, and three additional studies of optimization,
+coupling, and representation dimension. Training uses full-batch gradient
+descent, and sampling integrates the learned velocity field with forward
+Euler steps.
 
 ---
 
 ## Repository layout
 
+Python entry points live in `exp/`; matching grid definitions and run
+scripts live in `scripts/`.
+
+| Folder | Study | Default grid | Cells |
+| --- | --- | --- | ---: |
+| `exp1_optimization` | NTK spectrum and gradient-descent convergence | 3 dimensions × 2 sample sizes × 7 widths × 3 step-size multipliers × 5 seeds | 630 |
+| `exp2_coupling` | Coupling × network-conditioning comparison | 3 couplings × 2 architectures × 3 dimensions × 5 seeds | 90 |
+| `exp3_real_data` | PCA-dimension sweep on MNIST and Fashion-MNIST | 2 datasets × 16 `(d_pca, n)` pairs × 3 seeds | 96 |
+
+The original 150-cell simulation pipeline remains in
+`exp1_optimization`, and the original MNIST/Fashion-MNIST pipeline remains
+in `exp3_real_data`.
+
 ```
 FlowMatchNN/
-├── neurips_2026.pdf                   # paper (gitignored)
+├── pyproject.toml                     # package metadata
 ├── flowmatchnn.yml                    # conda environment
 │
-├── flowmatchnn/                       # installable package
+├── flowmatchnn/                       # reusable model, training, and evaluation code
 │   ├── data_generation.py             # Algorithm 1: data generating procedure
-│   ├── learning_and_sampling.py       # Algorithm 2: training + sampling + evaluation
-│   ├── model.py                       # two-layer ReLU velocity network
+│   ├── learning_and_sampling.py       # Algorithm 2: training, sampling, evaluation
+│   ├── model.py                       # conditional and unconditional ReLU networks
 │   └── utils/
-│       ├── data.py                    # source/target samplers and interpolant schedules
+│       ├── data.py                    # distributions, interpolant, and couplings
 │       ├── velocity.py                # conditional velocity field
 │       ├── losses.py                  # empirical flow-matching loss
-│       ├── metrics.py                 # sliced Wasserstein-1 estimator
-│       └── pca.py                     # PCA compression for real-data experiments
+│       ├── metrics.py                 # sliced and exact W₁ metrics
+│       ├── ntk.py                     # closed-form NTK and spectral utilities
+│       ├── pca.py                     # PCA and pixel-space evaluation
+│       └── realdata.py                # parquet image loading
 │
-├── exp/                               # experiment entry points
-│   ├── run_data.py                    # generate training dataset (Algorithm 1)
-│   ├── run_exp1.py                    # Exp 1 (simulation): training loss vs iteration
-│   ├── run_exp2.py                    # Exp 2 (simulation): W₁ distance vs iteration
-│   ├── run_exp1_vis.py                # plot Exp 1 results
-│   ├── run_exp2_vis.py                # plot Exp 2 results
-│   ├── run_real_exp1.py               # Exp 1 (real data): training loss vs iteration
-│   ├── run_real_exp2.py               # Exp 2 (real data): W₁ distance vs iteration
-│   ├── run_real_exp1_vis.py           # plot real Exp 1 results
-│   ├── run_real_exp2_vis.py           # plot real Exp 2 results
-│   └── run_real_vis_combined.py       # combined real-data figure
+├── exp/                               # Python experiment entry points
+│   ├── _common.py                     # shared CLI, paths, and CUDA checks
+│   ├── exp1_optimization/            # NTK study + original simulation pipeline
+│   ├── exp2_coupling/                # coupling/architecture comparison
+│   └── exp3_real_data/               # PCA sweep + original image pipeline
 │
-├── scripts/                           # SLURM array scripts
-│   ├── _grid.sh                       # simulation hyperparameter grid
-│   ├── _real_grid.sh                  # real-data hyperparameter grid
-│   ├── run_all_exp.sh                 # simulation: full pipeline (recommended)
-│   ├── run_all_real_exp_mnist.sh      # MNIST: full pipeline
-│   ├── run_all_real_exp_fashion_mnist.sh  # Fashion-MNIST: full pipeline
-│   ├── download_mnist.sh              # fetch MNIST parquets
-│   ├── download_fashion_mnist.sh      # fetch Fashion-MNIST parquets
-│   └── ...                            # per-step scripts (data/exp1/exp2/vis)
+├── scripts/                           # grids and run scripts; mirrors exp/
+│   ├── _env.sh                        # shared conda-env activation
+│   └── exp<k>_<name>/                 # grid definitions and run scripts
 │
-├── figs/                              # output figures (committed)
-├── data/                              # gitignored — generated datasets
-├── results/                           # gitignored — experiment traces and configs
-└── logs/                              # gitignored — SLURM stdout/stderr
+├── test/                              # NTK unit tests
+├── figs/                              # aggregate figures and CSV tables
+├── data/                              # generated/downloaded data (gitignored)
+├── results/                           # per-run artifacts (gitignored)
+└── logs/                              # run logs (gitignored)
 ```
 
-Each completed run writes:
+## Experimental invariants
 
-```
-results/<run_name>/
-├── config.json        # all resolved hyperparameters
-├── exp1_trace.csv     # columns: t, loss
-└── exp2_trace.csv     # columns: t, w1
-```
+The experiment drivers enforce the following conventions:
 
----
-
-## Experiments
-
-### Track A — Simulation
-
-Trains on a synthetic two-component Gaussian mixture target in `R^d`.
-At every `eval_every` gradient-descent steps, records:
-
-- **Exp 1:** training loss
-- **Exp 2:** sliced Wasserstein-1 distance between model samples and held-out target samples
-
-Hyperparameter grid (150 cells):
-
-| Axis      | Values                                     |
-|-----------|--------------------------------------------|
-| `m` (width)   | 16, 32, 64, 128, 256                   |
-| `η` (step size) | 1e-4, 1e-3, 1e-2                      |
-| `d` (dimension) | 5, 10, 15, 20, 25, 30, 35, 40, 45, 50 |
-| `n_train` | 500                                        |
-| `n_test`  | 5 000                                      |
-
-Fixed: `T = 500` iterations, `κ = 1.0`, `T_euler = 200`, `B_1 = 10`, `eval_every = 10`.
-
-### Track B — Real image data
-
-Applies the same flow-matching pipeline to **MNIST** and **Fashion-MNIST**.
-Images are compressed with PCA (retaining `d_flat // 100` components) before
-training. Records the same loss and W₁ metrics.
-
-Hyperparameter grid (12 cells per dataset):
-
-| Axis      | Values              |
-|-----------|---------------------|
-| `m`       | 128, 256, 512, 1024 |
-| `η`       | 1e-4, 1e-3, 1e-2    |
-| `n_train` | 500                 |
-| `n_test`  | 2 000               |
+1. **Training and evaluation data remain separate.** Real-data samplers
+   draw their source pools from the training split. Held-out samples are
+   used only for evaluation.
+2. **Metrics have fixed meanings.** `velocity_risk_l2` is the first
+   moment `E[||f-v||_2]` bounded in Theorem 3.3.
+   `velocity_risk_sq` is retained as a separate diagnostic and is not
+   compared with the same reference exponent.
+3. **Distributional scores include context.** Coupling plots report the
+   do-nothing reference and a matched finite-sample comparison. PCA plots
+   report `pca_reconstruction_w1` and `holdout_floor_w1`. These are
+   diagnostic reference levels, not universal mathematical lower bounds.
+   In particular, a do-nothing pixel-space baseline is not used after PCA
+   truncation because sliced W₁ is not monotone under added variance.
+4. **Step sizes are calibrated per cell.** Where applicable,
+   `ntk.eta_spectral` sets `eta = safety / lambda_max(H_tilde)`. Coupling
+   arms are therefore not compared at silently different effective step
+   sizes.
+5. **Stopping status is explicit.** Plateau-enabled trainers record
+   `stopped_iter` and `converged_ratio`, allowing readers to distinguish
+   early stopping from reaching the iteration cap. A completed run is not
+   automatically called converged.
+6. **Reported cells aggregate seeds.** Visualization scripts write mean
+   and standard deviation rather than selecting a single replication.
+7. **Paths are stable.** Entry points change to the repository root, so
+   relative `data/`, `results/`, and `figs/` paths do not depend on the
+   caller's working directory.
+8. **Every run is self-describing.** Resolved arguments and summary
+   statistics are stored beside traces in `results/<run_name>/`.
 
 ---
 
 ## Installation
 
+The provided environment uses Python 3.11, PyTorch with CUDA 12.1,
+NumPy, SciPy, Matplotlib, POT, and pytest.
+
 ```bash
-module load anaconda3/2024.6
 conda env create -f flowmatchnn.yml
 conda activate flowmatchnn
-pip install -e .
+python -m pip install -e .
 ```
 
-Requires a CUDA-capable GPU (`torch.cuda.is_available()` must be `True`).
+The training entry points require a CUDA-capable GPU and fail explicitly
+when CUDA is unavailable. The NTK unit tests can be run separately:
+
+```bash
+python -m pytest -q test/test_ntk.py
+```
 
 ---
 
 ## Running the experiments
 
-### Simulation (Track A)
+Run all commands from the repository root. The three main sweeps are
+independent and may be submitted concurrently.
 
-Full grid on SLURM (recommended):
+### 1. Download the image datasets
+
+This step is required only for the PCA sweep and the original real-data
+experiments. The downloaders place parquet files under `data/application/`.
 
 ```bash
-sbatch scripts/run_all_exp.sh        # 150 cells across 10 array tasks
+bash scripts/exp3_real_data/download_mnist.sh
+bash scripts/exp3_real_data/download_fashion_mnist.sh
 ```
 
-Single cell locally:
+### 2. Submit the experiment grids
 
 ```bash
-IDX=0 bash scripts/run_all_exp.sh
+sbatch scripts/exp1_optimization/run_ntk.sh
+sbatch scripts/exp2_coupling/run_coupling.sh
+sbatch scripts/exp3_real_data/run_pca_sweep.sh
 ```
 
-### Real image data (Track B)
+### 3. Build aggregate figures and tables
 
-Download the datasets first:
+These visualization steps are CPU-only and read the completed per-run
+artifacts from `results/`:
 
 ```bash
-bash scripts/download_mnist.sh
-bash scripts/download_fashion_mnist.sh
+bash scripts/exp1_optimization/run_ntk_vis.sh
+bash scripts/exp2_coupling/run_coupling_vis.sh
+bash scripts/exp3_real_data/run_pca_sweep_vis.sh
 ```
 
-Then submit:
+The principal outputs are:
+
+| Study | Per-run artifacts | Aggregate outputs |
+| --- | --- | --- |
+| NTK | `ntk_trace.csv`, `ntk_summary.json` | `ntk_rate_*.png`, `ntk_width_err_*.png`, `ntk_lambda_*.png`, `ntk_table.csv` |
+| Coupling | `trace.csv`, `coup_summary.json` | `coupling_w1.png`, `coupling_table.csv` |
+| PCA | `pixel_trace.csv`, `pca_summary.json`, `samples.npy` | `pca_vel_risk.png`, `pca_pixel_w1.png`, sample grids, `pca_sweep_table.csv` |
+
+Each run also writes `config.json`. Aggregate files are placed in the
+matching `figs/exp<k>_<name>/` directory. Visualization scripts report
+missing cells rather than silently treating an incomplete sweep as complete.
+
+### Original paper pipelines
+
+The original simulation and real-data drivers remain available:
 
 ```bash
-sbatch scripts/run_all_real_exp_mnist.sh
-sbatch scripts/run_all_real_exp_fashion_mnist.sh
-```
-
-Single cell locally:
-
-```bash
-RIDX=0 bash scripts/run_all_real_exp.sh --dataset mnist
+sbatch scripts/exp1_optimization/run_all.sh                       # 150-cell simulation sweep
+sbatch scripts/exp1_optimization/run_w1_vis.sh                    # simulation W₁ figures
+sbatch scripts/exp3_real_data/run_all_real_exp_mnist.sh           # MNIST
+sbatch scripts/exp3_real_data/run_all_real_exp_fashion_mnist.sh   # Fashion-MNIST
 ```
 
 ### Customization
 
-Edit `scripts/_grid.sh` (simulation) or `scripts/_real_grid.sh` (real data)
-to change the hyperparameter grid — all downstream scripts pick up the change
-automatically.
+The source-of-truth grids are
+`scripts/exp1_optimization/_ntk_grid.sh`,
+`scripts/exp2_coupling/_grid.sh`, and
+`scripts/exp3_real_data/_pca_grid.sh`. Their visualization drivers source
+the same files, so grid and plotting axes stay synchronized.
 
-Pass extra CLI flags directly to the underlying Python script:
-
-```bash
-sbatch scripts/run_exp1.sh --T 1000 --kappa 0.5
-```
-
-Adjust SLURM concurrency at submission time:
+Extra CLI arguments are forwarded to the Python entry point. `IDX` selects
+one flattened grid cell for an individual run:
 
 ```bash
-sbatch --array=0-19     scripts/run_all_exp.sh   # 20 shards
-sbatch --array=0-9%5    scripts/run_all_exp.sh   # cap at 5 concurrent
-sbatch --array=42       scripts/run_all_exp.sh   # single cell 42
+sbatch scripts/exp2_coupling/run_coupling.sh --T 100000  # change iteration cap
+IDX=0 bash scripts/exp1_optimization/run_ntk.sh          # run one cell
 ```

@@ -74,3 +74,36 @@ def velocity_general(
     m = data.mu(tau).unsqueeze(-1)
     mp = data.mu_prime(tau).unsqueeze(-1)
     return sp * x_0 + (mp / m) * (x_tau - s * x_0)
+
+
+def posterior_mean_x1(
+    x_0: torch.Tensor, *, center_norm: float = 2.0
+) -> torch.Tensor:
+    """
+    E[x_1 | x_0] under the paper's simulation model (sampling-error evaluation).
+
+    Prior:      x_1 ~ 0.5 N(+c e_1, I) + 0.5 N(-c e_1, I),  c = center_norm
+    Coupling:   x_0 | x_1 ~ N(x_1, I)
+
+    Per mixture component k the posterior is Gaussian,
+    x_1 | x_0, k ~ N((x_0 + mu_k) / 2, I/2), and the component weights
+    are w_k ∝ N(x_0; mu_k, 2I) ∝ exp(-||x_0 - mu_k||^2 / 4), so
+
+        E[x_1 | x_0] = sum_k w_k (x_0 + mu_k) / 2.
+
+    Needed by the oracle sampler: at tau = 0 the population velocity is
+    sigma'(0) x_0 + mu'(0) E[x_1 | x_0] (for tau > 0 the pair
+    (x_0, x_tau) pins x_1 down and velocity_general applies).
+
+    Shapes: x_0 (n, d) -> (n, d).
+    """
+    n, d = x_0.shape
+    mu_plus = torch.zeros(d, device=x_0.device, dtype=x_0.dtype)
+    mu_plus[0] = center_norm
+    # log-weights: -||x0 -/+ c e1||^2 / 4; softmax over the two components
+    lw_p = -((x_0 - mu_plus) ** 2).sum(dim=1) / 4.0
+    lw_m = -((x_0 + mu_plus) ** 2).sum(dim=1) / 4.0
+    w_p = torch.sigmoid(lw_p - lw_m).unsqueeze(-1)   # (n, 1)
+    mean_p = (x_0 + mu_plus) / 2.0
+    mean_m = (x_0 - mu_plus) / 2.0
+    return w_p * mean_p + (1.0 - w_p) * mean_m
