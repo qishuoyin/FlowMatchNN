@@ -17,11 +17,11 @@ integrates the learned velocity field with forward Euler steps.
 Python entry points live in `exp/`; matching grid definitions and run
 scripts live in `scripts/`.
 
-| Folder | Study | Default grid | Cells |
-| --- | --- | --- | ---: |
-| `exp1_optimization` | NTK spectrum and gradient-descent convergence | 3 dimensions × 2 sample sizes × 7 widths × 3 step-size multipliers × 5 seeds | 630 |
-| `exp2_coupling` | Coupling × network-conditioning comparison | 3 couplings × 2 architectures × 3 dimensions × 5 seeds | 90 |
-| `exp3_real_data` | PCA-dimension sweep on MNIST and Fashion-MNIST | 2 datasets × 16 `(d_pca, n)` pairs × 3 seeds | 96 |
+| Folder | Study | Default grid |
+| --- | --- | --- |
+| `exp1_optimization` | NTK spectrum and gradient-descent convergence | 3 dimensions × 2 sample sizes × 7 widths × 3 step-size multipliers × 5 seeds |
+| `exp2_coupling` | Coupling × network-conditioning comparison | 3 couplings × 2 architectures × 3 dimensions × 5 seeds |
+| `exp3_real_data` | PCA-dimension sweep on MNIST and Fashion-MNIST | 2 datasets × 16 `(d_pca, n)` pairs × 3 seeds |
 
 ```
 FlowMatchNN/
