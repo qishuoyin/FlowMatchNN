@@ -147,12 +147,8 @@ bash scripts/exp2_coupling/run_coupling_vis.sh
 bash scripts/exp3_real_data/run_pca_sweep_vis.sh
 ```
 
----
-
-## Conclusion
-
-FlowMatchNN provides a unified implementation of the paper's algorithms
-and experiments for studying optimization dynamics, coupling choices, and
-representation dimension in neural flow matching. The shared training,
-evaluation, and visualization code makes the theoretical and empirical
-analyses reproducible within one consistent framework.
+Together, these components provide a unified implementation for studying
+optimization dynamics, coupling choices, and representation dimension in
+neural flow matching. The shared training, evaluation, and visualization
+code keeps the paper's theoretical and empirical analyses reproducible
+within one consistent framework.
