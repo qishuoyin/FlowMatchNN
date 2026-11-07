@@ -5,11 +5,10 @@ Networks"**. The paper studies convergence, generalization, and
 Wasserstein-1 sampling guarantees for flow matching with a two-layer
 ReLU velocity network.
 
-The repository contains the implementations of Algorithms 1 and 2, the
-original paper experiments, and three additional studies of optimization,
-coupling, and representation dimension. Training uses full-batch gradient
-descent, and sampling integrates the learned velocity field with forward
-Euler steps.
+The repository contains the implementations of Algorithms 1 and 2 and
+experiments covering optimization, coupling, sampling, and representation
+dimension. Training uses full-batch gradient descent, and sampling
+integrates the learned velocity field with forward Euler steps.
 
 ---
 
@@ -23,10 +22,6 @@ scripts live in `scripts/`.
 | `exp1_optimization` | NTK spectrum and gradient-descent convergence | 3 dimensions × 2 sample sizes × 7 widths × 3 step-size multipliers × 5 seeds | 630 |
 | `exp2_coupling` | Coupling × network-conditioning comparison | 3 couplings × 2 architectures × 3 dimensions × 5 seeds | 90 |
 | `exp3_real_data` | PCA-dimension sweep on MNIST and Fashion-MNIST | 2 datasets × 16 `(d_pca, n)` pairs × 3 seeds | 96 |
-
-The original 150-cell simulation pipeline remains in
-`exp1_optimization`, and the original MNIST/Fashion-MNIST pipeline remains
-in `exp3_real_data`.
 
 ```
 FlowMatchNN/
@@ -48,9 +43,9 @@ FlowMatchNN/
 │
 ├── exp/                               # Python experiment entry points
 │   ├── _common.py                     # shared CLI, paths, and CUDA checks
-│   ├── exp1_optimization/            # NTK study + original simulation pipeline
+│   ├── exp1_optimization/            # NTK and simulation experiments
 │   ├── exp2_coupling/                # coupling/architecture comparison
-│   └── exp3_real_data/               # PCA sweep + original image pipeline
+│   └── exp3_real_data/               # PCA and image experiments
 │
 ├── scripts/                           # grids and run scripts; mirrors exp/
 │   ├── _env.sh                        # shared conda-env activation
@@ -125,8 +120,8 @@ independent and may be submitted concurrently.
 
 ### 1. Download the image datasets
 
-This step is required only for the PCA sweep and the original real-data
-experiments. The downloaders place parquet files under `data/application/`.
+This step is required for the PCA and image experiments. The downloaders
+place parquet files under `data/application/`.
 
 ```bash
 bash scripts/exp3_real_data/download_mnist.sh
@@ -152,41 +147,8 @@ bash scripts/exp2_coupling/run_coupling_vis.sh
 bash scripts/exp3_real_data/run_pca_sweep_vis.sh
 ```
 
-The principal outputs are:
-
-| Study | Per-run artifacts | Aggregate outputs |
-| --- | --- | --- |
-| NTK | `ntk_trace.csv`, `ntk_summary.json` | `ntk_rate_*.png`, `ntk_width_err_*.png`, `ntk_lambda_*.png`, `ntk_table.csv` |
-| Coupling | `trace.csv`, `coup_summary.json` | `coupling_w1.png`, `coupling_table.csv` |
-| PCA | `pixel_trace.csv`, `pca_summary.json`, `samples.npy` | `pca_vel_risk.png`, `pca_pixel_w1.png`, sample grids, `pca_sweep_table.csv` |
-
-Each run also writes `config.json`. Aggregate files are placed in the
-matching `figs/exp<k>_<name>/` directory. Visualization scripts report
-missing cells rather than silently treating an incomplete sweep as complete.
-
-### Original paper pipelines
-
-The original simulation and real-data drivers remain available:
-
-```bash
-sbatch scripts/exp1_optimization/run_all.sh                       # 150-cell simulation sweep
-sbatch scripts/exp1_optimization/run_w1_vis.sh                    # simulation W₁ figures
-sbatch scripts/exp3_real_data/run_all_real_exp_mnist.sh           # MNIST
-sbatch scripts/exp3_real_data/run_all_real_exp_fashion_mnist.sh   # Fashion-MNIST
-```
-
-### Customization
-
-The source-of-truth grids are
-`scripts/exp1_optimization/_ntk_grid.sh`,
-`scripts/exp2_coupling/_grid.sh`, and
-`scripts/exp3_real_data/_pca_grid.sh`. Their visualization drivers source
-the same files, so grid and plotting axes stay synchronized.
-
-Extra CLI arguments are forwarded to the Python entry point. `IDX` selects
-one flattened grid cell for an individual run:
-
-```bash
-sbatch scripts/exp2_coupling/run_coupling.sh --T 100000  # change iteration cap
-IDX=0 bash scripts/exp1_optimization/run_ntk.sh          # run one cell
-```
+Together, these components provide a unified implementation for studying
+optimization dynamics, coupling choices, and representation dimension in
+neural flow matching. The shared training, evaluation, and visualization
+code keeps the paper's theoretical and empirical analyses reproducible
+within one consistent framework.
